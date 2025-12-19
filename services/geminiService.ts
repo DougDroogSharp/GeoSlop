@@ -11,8 +11,7 @@ import { GroundingSource, LocationResult, UserLocation } from "../types";
 export interface VisualLandmark {
   shortCaption: string;
   richCaption: string;
-  searchTags: string;
-  imageUrl?: string;
+  imageUrl: string;
   sourceUri?: string;
 }
 
@@ -127,28 +126,25 @@ export class GeminiService {
     }
   }
 
-  /**
-   * INSTEAD OF GENERATING, we use Google Search to find real web photos.
-   * We prompt the model to find specific URLs.
-   */
   async getVisualKeywords(placeName: string, exclude: string[] = []): Promise<VisualLandmark[]> {
     const model = 'gemini-3-flash-preview';
     const exclusionPrompt = exclude.length > 0 ? ` Do NOT include any of these: ${exclude.join(', ')}.` : '';
-    
     try {
       return await this.withRetry(async () => {
         const response: GenerateContentResponse = await this.ai.models.generateContent({
           model,
-          contents: `Using Google Search, find 4 real, specific visual landmarks or unique perspectives strictly within "${placeName}".
-          For each landmark, you must find:
-          1. A real, direct public image URL (e.g., from Wikimedia Commons, Pixabay, or official tourism sites). 
-          2. The web page URL where this image is located.
-          3. A "shortCaption": 5-6 words max.
-          4. A "richCaption": 2-sentence poetic description.
+          contents: `Use Google Search to find 4 REAL, specific, and iconic visual landmarks strictly within "${placeName}". ${exclusionPrompt}
           
-          Return as a JSON array. If you cannot find a direct image URL, use a high-quality placeholder like 'https://images.unsplash.com/photo-[id]?auto=format&fit=crop&w=800&q=80' that corresponds to the landmark type.
+          MANDATORY INSTRUCTIONS FOR IMAGE URLS:
+          1. "imageUrl" MUST be a direct hotlink to the ACTUAL IMAGE FILE (ends in .jpg, .jpeg, .png, or .webp).
+          2. IMPORTANT: If using Wikimedia Commons, DO NOT use the "File:" page URL (e.g., commons.wikimedia.org/wiki/File:...). 
+             Instead, find the DIRECT THUMBNAIL URL (e.g., https://upload.wikimedia.org/wikipedia/commons/thumb/...).
+          3. If using Unsplash, use the direct image link (e.g., https://images.unsplash.com/photo-...).
+          4. "sourceUri": The human-readable web page where the photo is found.
+          5. "shortCaption": 3-5 bold words.
+          6. "richCaption": 2-sentence poetic description of the visual scene.
           
-          ${exclusionPrompt}`,
+          Return ONLY a JSON array. Be extremely accurate; your goal is to find direct embeddable links that show the actual location.`,
           config: {
             tools: [{ googleSearch: {} }],
             responseMimeType: "application/json",
@@ -162,7 +158,7 @@ export class GeminiService {
                   imageUrl: { type: Type.STRING },
                   sourceUri: { type: Type.STRING }
                 },
-                required: ["shortCaption", "richCaption", "imageUrl"]
+                required: ["shortCaption", "richCaption", "imageUrl", "sourceUri"]
               }
             }
           }
@@ -170,15 +166,8 @@ export class GeminiService {
         return JSON.parse(response.text || "[]");
       });
     } catch (e) {
-      console.error("Failed to gather web photos", e);
-      return [
-        { 
-          shortCaption: "Explore the City", 
-          richCaption: "The vibrant pulse of the streets comes alive under the golden hour sun.", 
-          imageUrl: "https://images.unsplash.com/photo-1477959858617-67f85cf4f1df?auto=format&fit=crop&w=800&q=80",
-          sourceUri: "https://unsplash.com"
-        },
-      ];
+      console.error("Discovery failed", e);
+      return [];
     }
   }
 
@@ -221,17 +210,14 @@ export class GeminiService {
 
   async getDynamicCoolLocation(exclude: string[]): Promise<{ name: string; lat: number; lng: number } | null> {
     const model = 'gemini-3-flash-preview';
-    const forbidden = ["Petra", "Grand Canyon", "Eiffel Tower", "Machu Picchu", "Pyramids of Giza", "Great Wall of China", "Statue of Liberty", "Sydney Opera House", "Vatican City"];
-    const allExclude = Array.from(new Set([...exclude, ...forbidden]));
-    const exclusionText = allExclude.length > 0 ? ` STRICTLY FORBIDDEN locations: ${allExclude.join(', ')}.` : "";
-    
+    const exclusionText = exclude.length > 0 ? ` DO NOT suggest any of these places: ${exclude.join(', ')}.` : "";
     try {
       return await this.withRetry(async () => {
         const response: GenerateContentResponse = await this.ai.models.generateContent({
           model,
-          contents: `Suggest one truly obscure, fascinating, and visually stunning hidden gem location on Earth. 
-          Think: bizarre geological formations, abandoned ancient cities, remote monasteries, or psychedelic natural wonders.
-          The goal is high variety and high "cool" factor. Avoid anything famous or typical.
+          contents: `Suggest one obscure, fascinating, and visually stunning hidden gem location on Earth. 
+          Avoid famous tourist traps like Petra, the Grand Canyon, or the Eiffel Tower. 
+          Focus on weird geography, ancient ruins, or remote natural wonders.
           ${exclusionText}
           Return ONLY a JSON object with keys "name", "lat", and "lng".`,
           config: {

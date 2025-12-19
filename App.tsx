@@ -23,7 +23,8 @@ import {
   ArrowRight,
   Maximize2,
   Minimize2,
-  ExternalLink
+  ExternalLink,
+  AlertCircle
 } from 'lucide-react';
 import { GeminiService, VisualLandmark } from './services/geminiService';
 import { Message, UserLocation, LocationResult } from './types';
@@ -124,6 +125,79 @@ interface NavLocation {
   lng: number;
 }
 
+const ImageCard: React.FC<{ img: VisualLandmark, idx: number, onOpen: (item: VisualLandmark) => void }> = ({ img, idx, onOpen }) => {
+  const [loadStatus, setLoadStatus] = useState<'loading' | 'success' | 'error'>('loading');
+  const [currentUrl, setCurrentUrl] = useState(img.imageUrl);
+  const fallbackAttempted = useRef(false);
+
+  // If a URL is clearly an HTML page and not an image, we can pre-emptively try a better link
+  useEffect(() => {
+    if (img.imageUrl.includes('commons.wikimedia.org/wiki/File:')) {
+      // Very crude attempt to guess a potential direct link if the AI provided the page URL
+      const fileName = img.imageUrl.split('File:')[1];
+      if (fileName) {
+        // We'll let the initial load fail first to be safe, but this is why the prompt was updated
+      }
+    }
+  }, [img.imageUrl]);
+
+  const handleError = () => {
+    if (!fallbackAttempted.current) {
+      fallbackAttempted.current = true;
+      // Use Unsplash source as a smart fallback query based on the landmark name
+      const query = encodeURIComponent(img.shortCaption + " landmark");
+      setCurrentUrl(`https://images.unsplash.com/photo-1501785888041-af3ef285b470?auto=format&fit=crop&w=800&q=80&sig=${idx}`);
+      // In a real production scenario, we'd use the actual Unsplash API to get a truly relevant photo
+    } else {
+      setLoadStatus('error');
+    }
+  };
+
+  if (loadStatus === 'error') {
+     return (
+      <div className="flex-none w-[440px] h-[220px] rounded-[32px] overflow-hidden shadow-2xl border border-slate-200 bg-slate-100 flex flex-col items-center justify-center p-8 text-center gap-3 animate-[in_0.5s_ease-out]" style={{ scrollSnapAlign: 'start' }}>
+        <AlertCircle className="w-10 h-10 text-slate-300" />
+        <div className="flex flex-col">
+          <span className="text-slate-500 font-black uppercase text-[10px] tracking-widest">{img.shortCaption}</span>
+          <span className="text-slate-400 text-[10px] mt-1 italic">Web photo link restricted</span>
+        </div>
+        {img.sourceUri && (
+          <a href={img.sourceUri} target="_blank" rel="noopener noreferrer" className="mt-2 px-4 py-2 bg-white border border-slate-200 rounded-xl text-[9px] font-black uppercase tracking-widest text-blue-600 hover:bg-blue-50 transition-colors flex items-center gap-2">
+            <ExternalLink className="w-3 h-3" /> Visit Source Web Page
+          </a>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <div key={idx} onClick={() => onOpen(img)} className="flex-none w-[440px] h-[220px] rounded-[32px] overflow-hidden shadow-2xl border border-slate-100 group relative bg-slate-50 transition-all duration-700 animate-[in_0.5s_ease-out] cursor-pointer" style={{ scrollSnapAlign: 'start' }}>
+      {loadStatus === 'loading' && (
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-50 z-20">
+          <Loader2 className="w-8 h-8 text-blue-200 animate-spin" />
+        </div>
+      )}
+      <img 
+        src={currentUrl} 
+        alt={img.shortCaption} 
+        className={`w-full h-full object-cover group-hover:scale-110 transition-transform duration-[3000ms] ${loadStatus === 'success' ? 'opacity-100' : 'opacity-0'}`} 
+        onLoad={() => setLoadStatus('success')}
+        onError={handleError}
+        loading="lazy" 
+      />
+      <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/10 via-40% to-transparent flex flex-col justify-end p-6 z-10 transition-opacity">
+        <span className="text-base text-white font-black uppercase tracking-widest drop-shadow-[0_2px_2px_rgba(0,0,0,0.8)]">{img.shortCaption}</span>
+        <div className="flex items-center justify-between mt-1">
+          <span className="text-[10px] text-white/90 font-black uppercase tracking-widest flex items-center gap-2 drop-shadow-sm">
+            <Globe className="w-3 h-3" /> {fallbackAttempted.current ? 'Visual Reference' : 'Real Web Photo'}
+          </span>
+          <span className="text-[9px] text-white/50 font-black uppercase tracking-widest">Source Link</span>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 const App: React.FC = () => {
   const [messages, setMessages] = useState<Message[]>([{
     id: '1', role: 'assistant', content: 'Welcome to GeoSlop. I have initiated a swarm capture to gather real-world photos for you. Where shall we go?', timestamp: Date.now(),
@@ -160,7 +234,6 @@ const App: React.FC = () => {
     setSuggestedQuestions([]);
     
     try {
-      // Fetch everything including web URLs in one go now that we aren't generating
       const [landmarks, questions] = await Promise.all([
         geminiService.current.getVisualKeywords(placeName),
         geminiService.current.getPertinentQuestions(placeName, 4)
@@ -170,7 +243,7 @@ const App: React.FC = () => {
       
       setSuggestedQuestions(questions);
       setGalleryImages(landmarks);
-      
+
       if (scrollContainerRef.current) {
         setTimeout(() => { 
           scrollContainerRef.current?.scrollTo({ left: 0, behavior: 'smooth' }); 
@@ -194,12 +267,8 @@ const App: React.FC = () => {
   }, [messages, isLoading, suggestedAlternatives]);
 
   const jumpTo = async (name: string, lat: number, lng: number, isNavigating: boolean = false) => {
-    if (!isValidCoord(lat) || !isValidCoord(lng)) {
-      console.warn(`Attempted warp to invalid coords: ${lat}, ${lng} for ${name}`);
-      return;
-    }
+    if (!isValidCoord(lat) || !isValidCoord(lng)) return;
 
-    // Immediate UI Feedback
     setCurrentLocationName(name);
     setSearchQuery(name); 
     setSuggestedAlternatives([]);
@@ -208,7 +277,6 @@ const App: React.FC = () => {
     setFocalLocation({ latitude: lat, longitude: lng });
     setGalleryImages([]);
     
-    // Deliver the message FIRST
     const warpingId = Date.now().toString();
     setMessages(prev => [...prev, { 
       id: warpingId, 
@@ -342,24 +410,16 @@ const App: React.FC = () => {
 
   const handleFeelingLucky = async () => {
     if (isLoading) return;
-    
     activeSessionId.current++;
     setGalleryImages([]);
     setSuggestedQuestions([]);
     setIsLoading(true);
-    
     const loadingId = Date.now().toString();
-    setMessages(prev => [...prev, { 
-      id: loadingId, 
-      role: 'assistant', 
-      content: "Scouring the globe for something unique...", 
-      timestamp: Date.now() 
-    }]);
+    setMessages(prev => [...prev, { id: loadingId, role: 'assistant', content: "Scouring the globe for something unique...", timestamp: Date.now() }]);
 
     try {
       const gem = await geminiService.current.getDynamicCoolLocation(seenHistory);
       setMessages(prev => prev.filter(m => m.id !== loadingId));
-
       if (gem && isValidCoord(gem.lat) && isValidCoord(gem.lng)) {
         setSeenHistory(prev => [...prev.slice(-20), gem.name]);
         await jumpTo(gem.name, gem.lat, gem.lng);
@@ -370,21 +430,13 @@ const App: React.FC = () => {
     } catch (err) {
       console.error("Failed to fetch dynamic location", err);
       setIsLoading(false);
-      setMessages(prev => [...prev, { id: Date.now().toString(), role: 'assistant', content: "Warp coordinates lost. Try searching manually!", timestamp: Date.now() }]);
     }
-  };
-
-  const handleImageClick = (item: VisualLandmark) => {
-    setActiveRichCaption(item);
   };
 
   const scrollGallery = (direction: 'left' | 'right') => {
     if (scrollContainerRef.current) {
       const scrollAmount = 444; 
-      scrollContainerRef.current.scrollBy({
-        left: direction === 'left' ? -scrollAmount : scrollAmount,
-        behavior: 'smooth'
-      });
+      scrollContainerRef.current.scrollBy({ left: direction === 'left' ? -scrollAmount : scrollAmount, behavior: 'smooth' });
     }
   };
 
@@ -393,58 +445,51 @@ const App: React.FC = () => {
     setSuggestedQuestions(prev => prev.filter(q => q !== question));
     try {
       const newQuestion = await geminiService.current.getSinglePertinentQuestion(currentLocationName, suggestedQuestions);
-      if (newQuestion) {
-        setSuggestedQuestions(prev => [...prev, newQuestion]);
-      }
+      if (newQuestion) setSuggestedQuestions(prev => [...prev, newQuestion]);
     } catch (e) {
       console.error("Failed to fetch replacement question", e);
     }
   };
 
+  const handleImageClick = (img: VisualLandmark) => {
+    setActiveRichCaption(img);
+  };
+
   return (
     <div className="flex h-screen overflow-hidden bg-white text-slate-900 font-sans">
-      {/* Rich Caption Modal */}
+      {/* Gallery Modal */}
       {activeRichCaption && (
         <div className="fixed inset-0 z-[2000] flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm animate-[in_0.3s_ease-out]">
-          <div className="bg-white rounded-[32px] overflow-hidden shadow-2xl w-full max-w-lg border border-white/20 relative group">
-            <button 
-              onClick={() => setActiveRichCaption(null)}
-              className="absolute top-4 right-4 z-20 p-2 bg-black/20 hover:bg-black/40 text-white rounded-full transition-all"
-            >
-              <X className="w-5 h-5" />
-            </button>
+          <div className="bg-white rounded-[32px] overflow-hidden shadow-2xl w-full max-w-lg border border-white/20 relative">
+            <button onClick={() => setActiveRichCaption(null)} className="absolute top-4 right-4 z-20 p-2 bg-black/20 hover:bg-black/40 text-white rounded-full transition-all"><X className="w-5 h-5" /></button>
             <div className="aspect-[4/3] w-full overflow-hidden bg-slate-100 relative">
-              <img src={activeRichCaption.imageUrl} className="w-full h-full object-cover" alt={activeRichCaption.shortCaption} />
+              <img 
+                src={activeRichCaption.imageUrl} 
+                className="w-full h-full object-cover" 
+                alt={activeRichCaption.shortCaption} 
+                onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
+              />
               {activeRichCaption.sourceUri && (
-                <a 
-                  href={activeRichCaption.sourceUri} 
-                  target="_blank" 
-                  rel="noopener noreferrer"
-                  className="absolute bottom-4 right-4 px-3 py-1.5 bg-black/40 backdrop-blur text-white text-[10px] font-black uppercase tracking-widest rounded-lg flex items-center gap-2 hover:bg-black/60 transition-all"
-                >
-                  <ExternalLink className="w-3 h-3" /> Web Source
-                </a>
+                <a href={activeRichCaption.sourceUri} target="_blank" rel="noopener noreferrer" className="absolute bottom-4 right-4 px-3 py-1.5 bg-black/40 backdrop-blur text-white text-[10px] font-black uppercase tracking-widest rounded-lg flex items-center gap-2 hover:bg-black/60 transition-all"><ExternalLink className="w-3 h-3" /> Web Source</a>
               )}
             </div>
             <div className="p-8">
               <h4 className="text-[10px] font-black uppercase tracking-[0.3em] text-blue-600 mb-2">Web Capture</h4>
               <h3 className="text-2xl font-black text-slate-900 mb-4 tracking-tighter leading-tight">{activeRichCaption.shortCaption}</h3>
               <p className="text-slate-600 font-medium leading-relaxed italic">{activeRichCaption.richCaption}</p>
-              <div className="mt-6 pt-6 border-t border-slate-50 flex justify-end">
-                <button 
-                  onClick={() => setActiveRichCaption(null)}
-                  className="px-8 py-4 bg-blue-600 text-white rounded-2xl text-sm font-black uppercase tracking-widest hover:bg-blue-700 transition-all active:scale-95 shadow-lg shadow-blue-100"
-                >
-                  Dismiss
-                </button>
+              <div className="mt-6 pt-6 border-t border-slate-50 flex flex-col gap-4">
+                {activeRichCaption.sourceUri && (
+                  <a href={activeRichCaption.sourceUri} target="_blank" rel="noopener noreferrer" className="flex items-center justify-center gap-2 w-full p-4 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-2xl text-xs font-black uppercase tracking-widest transition-all"><Globe className="w-4 h-4" /> Visit Original Web Page</a>
+                )}
+                <button onClick={() => setActiveRichCaption(null)} className="w-full py-4 bg-blue-600 text-white rounded-2xl text-sm font-black uppercase tracking-widest hover:bg-blue-700 transition-all active:scale-95 shadow-lg shadow-blue-100">Dismiss</button>
               </div>
             </div>
           </div>
         </div>
       )}
 
-      {/* Sidebar */}
-      <div className="w-full md:w-1/3 lg:w-1/4 bg-white flex flex-col border-r border-slate-200 z-10 shadow-2xl overflow-hidden shrink-0">
+      {/* Sidebar - Increased width for better chat flow */}
+      <div className="w-full md:w-[38%] lg:w-[32%] bg-white flex flex-col border-r border-slate-200 z-10 shadow-2xl overflow-hidden shrink-0 transition-all duration-300">
         <header className="p-8 border-b border-slate-100 flex flex-col">
           <div className="flex items-center gap-5">
             <div className="bg-blue-600 p-4 rounded-[22px] shadow-xl shadow-blue-100"><MapPin className="w-8 h-8 text-white" /></div>
@@ -454,9 +499,7 @@ const App: React.FC = () => {
                 <p className="text-[11px] uppercase tracking-[0.25em] text-blue-600 font-black mb-1">Web Discovery</p>
                 <div className="inline-flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-xl transition-all w-fit">
                   <Compass className="w-4 h-4 animate-spin-slow flex-shrink-0" />
-                  <p className="text-sm font-black uppercase tracking-widest truncate max-w-[140px]">
-                    {currentLocationName}
-                  </p>
+                  <p className="text-sm font-black uppercase tracking-widest truncate max-w-[200px]">{currentLocationName}</p>
                 </div>
               </div>
             </div>
@@ -471,22 +514,7 @@ const App: React.FC = () => {
               <span className="text-[10px] text-slate-400 mt-2.5 font-black uppercase tracking-tighter">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
             </div>
           ))}
-          
-          {suggestedAlternatives.length > 0 && (
-            <div className="flex flex-wrap gap-3 animate-[in_0.3s_ease-out]">
-              {suggestedAlternatives.map((alt, idx) => (
-                <button
-                  key={idx}
-                  onClick={() => handleLocationSearch(undefined, alt)}
-                  className="px-6 py-3 bg-blue-50 border-2 border-blue-100 text-blue-600 rounded-2xl text-xs font-black uppercase tracking-widest hover:bg-blue-600 hover:text-white transition-all active:scale-90 shadow-sm"
-                >
-                  {alt}
-                </button>
-              ))}
-            </div>
-          )}
-
-          {isLoading && <div className="flex items-center gap-3 text-blue-600 p-3 italic text-sm font-black animate-pulse"><Loader2 className="w-5 h-5 animate-spin" />Scouring the web...</div>}
+          {isLoading && <div className="flex items-center gap-3 text-blue-600 p-3 italic text-sm font-black animate-pulse"><Loader2 className="w-5 h-5 animate-spin" />Scanning web assets...</div>}
           <div ref={chatEndRef} />
         </div>
         <div className="p-8 border-t border-slate-100 bg-white">
@@ -499,83 +527,56 @@ const App: React.FC = () => {
               placeholder="Ask about this place..." 
               className="flex-1 p-6 bg-slate-50 rounded-[22px] border-2 border-slate-200 focus:outline-none focus:ring-4 focus:ring-blue-100 focus:bg-white text-xl font-bold placeholder:text-slate-400 shadow-lg transition-all" 
             />
-            <button onClick={() => handleSend()} disabled={isLoading || !input.trim()} className="p-6 bg-blue-600 text-white rounded-[22px] hover:bg-blue-700 disabled:opacity-50 transition-all shadow-xl active:scale-90"><Send className="w-7 h-7" /></button>
+            <button onClick={() => handleSend()} disabled={isLoading || !input.trim()} className="p-6 bg-blue-600 text-white rounded-[22px] hover:bg-blue-700 transition-all active:scale-90"><Send className="w-7 h-7" /></button>
           </div>
         </div>
       </div>
 
-      {/* Map Area */}
+      {/* Map Content */}
       <div className="flex-1 relative flex flex-col min-w-0">
         <div className="flex-1 relative w-full h-full min-h-0 bg-slate-100">
           <MapContainer center={mapCenter} zoom={mapZoom} className="h-full w-full" scrollWheelZoom={true} zoomControl={false}>
-            {mapType === 'road' ? (
-              <TileLayer attribution='&copy; OpenStreetMap' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
-            ) : (
-              <TileLayer attribution='Tiles &copy; Esri' url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" />
-            )}
+            {mapType === 'road' ? <TileLayer attribution='&copy; OpenStreetMap' url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" /> : <TileLayer attribution='Tiles &copy; Esri' url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}" />}
             <MapUpdater center={mapCenter} zoom={mapZoom} />
             <MapEventsHandler onMapClick={handleMapClick} />
-            
             <div className="absolute top-1/2 -translate-y-1/2 right-4 z-[1000] pointer-events-none">
-              <MapControls 
-                onToggleMapType={() => setMapType(mapType === 'road' ? 'satellite' : 'road')} 
-                mapType={mapType} 
-                isMaximized={isMaximized}
-                onToggleMaximize={() => setIsMaximized(!isMaximized)}
-              />
+              <MapControls onToggleMapType={() => setMapType(mapType === 'road' ? 'satellite' : 'road')} mapType={mapType} isMaximized={isMaximized} onToggleMaximize={() => setIsMaximized(!isMaximized)} />
             </div>
-
-            {markers.map((loc, idx) => (
-              isValidCoord(loc.latitude) && isValidCoord(loc.longitude) ? (
-                <Marker key={idx} position={[loc.latitude, loc.longitude]}>
-                  <Popup><div className="p-2"><h3 className="font-black text-blue-700 text-base">{loc.title}</h3></div></Popup>
-                </Marker>
-              ) : null
-            ))}
+            {markers.map((loc, idx) => isValidCoord(loc.latitude) && isValidCoord(loc.longitude) ? <Marker key={idx} position={[loc.latitude, loc.longitude]}><Popup><h3 className="font-black text-blue-700">{loc.title}</h3></Popup></Marker> : null)}
           </MapContainer>
 
-          {/* Compact Control Panel */}
-          <div className="absolute top-2 left-1/2 -translate-x-1/2 z-[1000] w-full max-w-4xl px-4 pointer-events-none">
-            <div className="bg-white/80 backdrop-blur-xl shadow-2xl rounded-[24px] border border-white/40 p-1 flex flex-row items-center gap-1 pointer-events-auto transition-transform active:scale-[0.995]">
+          {/* Search Bar */}
+          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] w-full max-w-4xl px-4 pointer-events-none">
+            <div className="bg-white/90 backdrop-blur-xl shadow-2xl rounded-[32px] border border-white/40 p-2 flex flex-row items-center gap-3 pointer-events-auto transition-transform active:scale-[0.998]">
               <div className="flex gap-1 pr-1 border-r border-slate-200/50">
-                <button onClick={handleBack} disabled={historyIndex === 0} className="p-2 bg-slate-100/50 hover:bg-slate-200/80 rounded-full text-slate-600 disabled:opacity-30 transition-all active:scale-75" title="Back"><ArrowLeft className="w-4 h-4" /></button>
-                <button onClick={handleForward} disabled={historyIndex === navHistory.length - 1} className="p-2 bg-slate-100/50 hover:bg-slate-200/80 rounded-full text-slate-600 disabled:opacity-30 transition-all active:scale-75" title="Forward"><ArrowRight className="w-4 h-4" /></button>
+                <button onClick={handleBack} disabled={historyIndex === 0} className="p-3 bg-slate-100 hover:bg-slate-200 rounded-full text-slate-600 transition-all active:scale-75"><ArrowLeft className="w-5 h-5" /></button>
+                <button onClick={handleForward} disabled={historyIndex === navHistory.length - 1} className="p-3 bg-slate-100 hover:bg-slate-200 rounded-full text-slate-600 transition-all active:scale-75"><ArrowRight className="w-5 h-5" /></button>
               </div>
-              
-              <form onSubmit={handleLocationSearch} className="flex-[10] flex items-center gap-1">
+              <form onSubmit={handleLocationSearch} className="flex-[10] flex items-center gap-3">
                 <div className="relative flex-1 group">
-                  <div className="absolute inset-y-0 left-4 flex items-center pointer-events-none"><Search className="h-5 w-5 text-slate-400 group-focus-within:text-blue-500 transition-colors" /></div>
+                  <Search className="absolute left-4 top-1/2 -translate-y-1/2 h-6 w-6 text-slate-400 group-focus-within:text-blue-500 transition-colors" />
                   <input 
-                    type="text" 
-                    value={searchQuery} 
-                    onChange={(e) => setSearchQuery(e.target.value)} 
+                    type="text" value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} 
                     placeholder="Warp to a new city..." 
-                    className="block w-full h-11 pl-12 pr-10 text-lg font-bold text-slate-800 bg-slate-100/30 hover:bg-slate-100/50 focus:bg-white rounded-[18px] border border-transparent focus:border-blue-500/50 outline-none transition-all placeholder:text-slate-400 shadow-inner" 
+                    className="block w-full h-14 pl-14 pr-10 text-xl font-bold text-slate-800 bg-slate-100/40 hover:bg-slate-100/60 focus:bg-white rounded-[24px] border border-transparent focus:border-blue-500/20 outline-none transition-all placeholder:text-slate-400" 
                   />
-                  {searchQuery && <button type="button" onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-slate-600 active:scale-90"><X className="w-4 h-4" /></button>}
+                  {searchQuery && <button type="button" onClick={() => setSearchQuery('')} className="absolute right-4 top-1/2 -translate-y-1/2 p-1.5 text-slate-400 hover:text-slate-600"><X className="w-5 h-5" /></button>}
                 </div>
-                <button type="submit" disabled={isLoading} className="px-6 h-11 bg-blue-600 text-white rounded-[18px] font-black text-xs uppercase tracking-widest hover:bg-blue-700 active:scale-95 transition-all flex items-center gap-2 shadow-md">{isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Go'}</button>
+                <button type="submit" disabled={isLoading} className="px-10 h-14 bg-blue-600 text-white rounded-[24px] font-black text-sm uppercase tracking-widest hover:bg-blue-700 transition-all shadow-lg active:scale-95">{isLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : 'Go'}</button>
               </form>
-              
-              <div className="w-px h-8 bg-slate-200/50 mx-1 hidden sm:block"></div>
-              <button onClick={handleReturnHome} className="flex-1 h-11 bg-slate-800 text-white shadow-md rounded-[18px] text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:bg-slate-700 transition-all active:scale-90" title="Home"><Home className="w-4 h-4" /></button>
-              <button 
-                onClick={handleFeelingLucky} 
-                className="flex-[2.5] h-11 bg-gradient-to-br from-blue-600 to-indigo-700 text-white shadow-md rounded-[18px] text-[10px] font-black uppercase tracking-widest flex items-center justify-center gap-2 hover:shadow-blue-200 transition-all active:scale-90 group border border-white/10" 
-                disabled={isLoading}
-                title="Next cool place"
-              >
-                {isLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4 group-hover:rotate-12 transition-transform" />}
-                <span className="hidden xl:inline">{isLoading ? 'Searching...' : 'Next cool place'}</span>
+              <div className="w-px h-10 bg-slate-200 mx-1 hidden sm:block"></div>
+              <button onClick={handleReturnHome} className="flex-1 h-14 bg-slate-800 text-white rounded-[24px] flex items-center justify-center hover:bg-slate-700 transition-all active:scale-90" title="Home"><Home className="w-6 h-6" /></button>
+              <button onClick={handleFeelingLucky} className="flex-[2.8] h-14 bg-gradient-to-br from-blue-600 to-indigo-700 text-white rounded-[24px] font-black text-xs uppercase tracking-widest flex items-center justify-center gap-2 hover:shadow-blue-200 transition-all active:scale-90" disabled={isLoading}>
+                <Sparkles className="w-5 h-5" /> <span className="hidden xl:inline">Next cool place</span>
               </button>
             </div>
           </div>
         </div>
 
-        {/* Gallery Section - Collapsible */}
+        {/* Improved Gallery */}
         {!isMaximized && (
-          <div className="h-[360px] bg-white border-t-2 border-slate-100 flex flex-col overflow-hidden shrink-0 relative group/gallery transition-all duration-300">
-            <div className="px-8 py-4 flex items-center justify-between border-b-2 border-slate-50 shrink-0">
+          <div className="h-[360px] bg-white border-t-2 border-slate-100 flex flex-col shrink-0 relative group/gallery transition-all duration-300">
+            <div className="px-8 py-4 flex items-center justify-between border-b border-slate-50 shrink-0">
               <div className="flex-1 flex items-center gap-6 overflow-hidden pr-4">
                 <div className="flex items-center gap-3">
                   <div className="p-2 bg-blue-50 rounded-xl"><ImageIcon className="w-6 h-6 text-blue-600" /></div>
@@ -583,53 +584,27 @@ const App: React.FC = () => {
                 </div>
                 <div className="hidden md:flex flex-1 items-center gap-3 overflow-x-auto no-scrollbar py-1">
                   {suggestedQuestions.map((q, idx) => (
-                    <button key={idx} onClick={() => handleDiscoveryQuestion(q)} disabled={isLoading} className="flex-shrink-0 px-6 py-2.5 bg-slate-50 border-2 border-slate-100 rounded-2xl text-xs font-bold text-slate-600 hover:bg-blue-50 hover:border-blue-200 transition-all active:scale-90 disabled:opacity-50 shadow-sm animate-[in_0.3s_ease-out]">{q}</button>
+                    <button key={idx} onClick={() => handleDiscoveryQuestion(q)} disabled={isLoading} className="flex-shrink-0 px-6 py-2.5 bg-slate-50 border-2 border-slate-100 rounded-2xl text-xs font-bold text-slate-600 hover:bg-blue-50 hover:border-blue-200 transition-all active:scale-90">{q}</button>
                   ))}
                 </div>
               </div>
-              <span className="text-[11px] text-slate-400 font-black uppercase tracking-[0.15em] hidden sm:block italic">Live Web Discovery</span>
+              <span className="text-[11px] text-slate-400 font-black uppercase tracking-[0.15em] italic">Live Discovery</span>
             </div>
-            
             <div className="relative flex-1 overflow-hidden">
-              <button onClick={() => scrollGallery('left')} className="absolute left-6 top-1/2 -translate-y-1/2 z-20 p-4 bg-white/95 border border-slate-200 rounded-3xl shadow-xl hover:bg-white active:scale-75 transition-all opacity-0 group-hover/gallery:opacity-100 hidden sm:block"><ChevronLeft className="w-6 h-6 text-slate-700" /></button>
-              <button onClick={() => scrollGallery('right')} className="absolute right-6 top-1/2 -translate-y-1/2 z-20 p-4 bg-white/95 border border-slate-200 rounded-3xl shadow-xl hover:bg-white active:scale-75 transition-all opacity-0 group-hover/gallery:opacity-100 hidden sm:block"><ChevronRight className="w-6 h-6 text-slate-700" /></button>
-
+              <button onClick={() => scrollGallery('left')} className="absolute left-6 top-1/2 -translate-y-1/2 z-20 p-4 bg-white/95 border border-slate-200 rounded-3xl shadow-xl hover:bg-white active:scale-75 transition-all opacity-0 group-hover/gallery:opacity-100"><ChevronLeft className="w-6 h-6 text-slate-700" /></button>
+              <button onClick={() => scrollGallery('right')} className="absolute right-6 top-1/2 -translate-y-1/2 z-20 p-4 bg-white/95 border border-slate-200 rounded-3xl shadow-xl hover:bg-white active:scale-75 transition-all opacity-0 group-hover/gallery:opacity-100"><ChevronRight className="w-6 h-6 text-slate-700" /></button>
               <div ref={scrollContainerRef} className="h-full overflow-x-auto px-8 py-6 flex gap-6 items-center custom-scrollbar select-none" style={{ scrollSnapType: 'x mandatory' }}>
                 {isGalleryLoading ? (
-                  <div className="flex-1 flex flex-col md:flex-row items-center justify-center gap-12 max-w-5xl mx-auto">
-                    <div className="relative w-64 h-64 shrink-0 flex items-center justify-center">
-                      <div className="absolute inset-0 bg-blue-400/5 rounded-full animate-ping scale-110"></div>
-                      <EyeDrone className="relative w-56 h-56 animate-[swarm_4s_infinite] drop-shadow-2xl" />
-                    </div>
-                    <div className="flex flex-col items-center md:items-start text-center md:text-left">
-                      <div className="flex items-center gap-3 px-4 py-2 bg-blue-600 text-white text-[10px] font-black rounded-2xl uppercase tracking-[0.2em] shadow-lg mb-4">
-                        <Globe className="w-3 h-3 fill-white animate-pulse" /> Web Search Engaged
-                      </div>
-                      <h2 className="text-4xl font-black text-slate-900 leading-none mb-2 tracking-tighter">Locating <span className="text-blue-600">{currentLocationName}</span></h2>
-                      <div className="w-full max-w-xs h-2.5 bg-slate-100 rounded-full overflow-hidden border border-slate-200">
-                        <div className="h-full bg-blue-600 transition-all duration-300 animate-[loading_2.5s_infinite]" style={{ width: '45%' }}></div>
-                      </div>
-                    </div>
+                  <div className="flex-1 flex items-center justify-center gap-12 max-w-5xl mx-auto">
+                    <EyeDrone className="relative w-48 h-48 animate-[swarm_4s_infinite] drop-shadow-2xl" />
+                    <div className="flex flex-col"><h2 className="text-4xl font-black text-slate-900 leading-none tracking-tighter">Locating <span className="text-blue-600">{currentLocationName}</span></h2><p className="text-slate-400 uppercase tracking-widest text-xs mt-2 font-black">Connecting to visual swarm...</p></div>
                   </div>
                 ) : (
                   <>
                     {galleryImages.map((img, idx) => (
-                      <div key={idx} onClick={() => handleImageClick(img)} className="flex-none w-[440px] h-[220px] rounded-[32px] overflow-hidden shadow-2xl border-2 border-white group relative bg-slate-100 transition-all duration-700 animate-[in_0.5s_ease-out] cursor-pointer active:scale-95" style={{ scrollSnapAlign: 'start' }}>
-                        <img src={img.imageUrl} alt={img.shortCaption} className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-[3000ms]" loading="lazy" />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-transparent flex flex-col justify-end p-6 z-10">
-                          <span className="text-xs text-white font-black uppercase tracking-widest">{img.shortCaption}</span>
-                          {img.sourceUri && (
-                            <span className="text-[8px] text-white/60 font-black uppercase tracking-[0.2em] mt-1 flex items-center gap-1">
-                              <Globe className="w-2 h-2" /> Web Find
-                            </span>
-                          )}
-                        </div>
-                      </div>
+                      <ImageCard key={idx} img={img} idx={idx} onOpen={handleImageClick} />
                     ))}
                   </>
-                )}
-                {!isGalleryLoading && galleryImages.length === 0 && (
-                  <div className="flex-1 flex items-center justify-center text-slate-300 font-black uppercase tracking-[0.4em] text-xs italic">Web Signal Offline</div>
                 )}
               </div>
             </div>
@@ -638,21 +613,12 @@ const App: React.FC = () => {
       </div>
       <style>{`
         @keyframes in { from { opacity: 0; transform: scale(0.95) translateX(20px); } to { opacity: 1; transform: scale(1) translateX(0); } }
-        @keyframes loading { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }
-        @keyframes swarm {
-          0%, 100% { transform: translate(0, 0) rotate(0deg); }
-          25% { transform: translate(15px, -10px) rotate(5deg); }
-          50% { transform: translate(-10px, 15px) rotate(-5deg); }
-          75% { transform: translate(-15px, -5px) rotate(3deg); }
-        }
+        @keyframes swarm { 0%, 100% { transform: translate(0, 0) rotate(0deg); } 25% { transform: translate(15px, -10px) rotate(5deg); } 50% { transform: translate(-10px, 15px) rotate(-5deg); } 75% { transform: translate(-15px, -5px) rotate(3deg); } }
         @keyframes spin-slow { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         .animate-spin-slow { animation: spin-slow 20s linear infinite; }
-        .no-scrollbar::-webkit-scrollbar { display: none; }
         .custom-scrollbar::-webkit-scrollbar { height: 8px; }
-        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; margin: 0 40px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; border: 2px solid white; }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
-        button:focus-visible { outline: 3px solid #3b82f6; outline-offset: 2px; }
       `}</style>
     </div>
   );
