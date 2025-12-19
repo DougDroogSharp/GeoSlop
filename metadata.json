@@ -1,0 +1,7 @@
+{
+  "name": "GeoSlop Chatbot",
+  "description": "An interactive map-based chatbot that uses Gemini's real-time Google Maps and Search grounding to answer location-specific questions with live data.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}
